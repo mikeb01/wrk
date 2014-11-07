@@ -15,6 +15,7 @@ static struct config {
     uint64_t timeout;
     uint64_t pipeline;
     uint64_t delay_ms;
+    uint64_t warmup_ms;
     bool     latency;
     bool     dynamic;
     char    *script;
@@ -61,7 +62,8 @@ static void usage() {
            "    -v, --version          Print version details      \n"
            "        --delay       <T>  Think time (ms) between    \n"
            "                           each request, default = 0  \n"
-           "                                                      \n"
+           "        --warmup      <T>  Warmup time (ms),          \n"
+           "                           default = 0                \n"
            "                                                      \n"
            "  Numeric arguments may include a SI unit (1k, 1M, 1G)\n"
            "  Time arguments may include a time unit (2s, 2m, 2h)\n");
@@ -184,7 +186,7 @@ int main(int argc, char **argv) {
     char *time = format_time_s(cfg.duration);
     printf("Running %s test @ %s\n", time, url);
     printf("  %"PRIu64" threads and %"PRIu64" connections\n", cfg.threads, cfg.connections);
-    printf("Delay (think time) is %dms\n", cfg.delay_ms);
+    printf("Delay (think time) is %"PRIu64"ms\n", cfg.delay_ms);
 
     uint64_t start    = time_us();
     uint64_t complete = 0;
@@ -287,7 +289,11 @@ void *thread_main(void *arg) {
         connect_socket(thread, c);
     }
 
-    aeCreateTimeEvent(loop, CALIBRATE_DELAY_MS, calibrate, thread, NULL);
+    if (0 != cfg.warmup_ms) {
+        aeCreateTimeEvent(loop, cfg.warmup_ms, warmup, thread, NULL);
+    } else {
+        aeCreateTimeEvent(loop, CALIBRATE_DELAY_MS, calibrate, thread, NULL);
+    }
     aeCreateTimeEvent(loop, TIMEOUT_INTERVAL_MS, check_timeouts, thread, NULL);
 
     thread->start = time_us();
@@ -345,7 +351,21 @@ static int reconnect_socket(thread *thread, connection *c) {
     return connect_socket(thread, c);
 }
 
+static int warmup(aeEventLoop *loop, long long id, void *data) {
+    printf("Completed warmup of %"PRIu64"ms\n", cfg.warmup_ms);
+
+    thread *thread = data;
+    stats_reset(thread->latency);
+    hdr_reset(thread->latency_histogram);
+    hdr_reset(thread->corrected_histogram);
+    aeCreateTimeEvent(loop, CALIBRATE_DELAY_MS, calibrate, thread, NULL);
+
+    return AE_NOMORE;
+}
+
 static int calibrate(aeEventLoop *loop, long long id, void *data) {
+    printf("Completed calibrate of %dms\n", CALIBRATE_DELAY_MS);
+
     thread *thread = data;
 
     (void) stats_summarize(thread->latency);
@@ -364,10 +384,6 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
     stats_reset(thread->latency);
     hdr_reset(thread->latency_histogram);
     hdr_reset(thread->corrected_histogram);
-
-    printf(
-        "Interval: %d, expected_interval: %lld, latency: %Lf\n",
-        thread->interval, thread->expected_interval, latency);
 
     aeCreateTimeEvent(loop, thread->interval, sample_rate, thread, NULL);
 
@@ -442,10 +458,10 @@ static int response_body(http_parser *parser, const char *at, size_t len) {
 }
 
 static int after_delay(aeEventLoop *loop, long long id, void *data) {
-    aeDeleteTimeEvent(loop, id);
-
     connection* c = data;
     aeCreateFileEvent(c->thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
+
+    return AE_NOMORE;
 }
 
 static int response_complete(http_parser *parser) {
@@ -613,6 +629,7 @@ static struct option longopts[] = {
     { "help",        no_argument,       NULL, 'h' },
     { "version",     no_argument,       NULL, 'v' },
     { "delay",       required_argument, NULL, 'D' },
+    { "warmup",      required_argument, NULL, 'w' },
     { NULL,          0,                 NULL,  0  }
 };
 
@@ -626,7 +643,7 @@ static int parse_args(struct config *cfg, char **url, char **headers, int argc, 
     cfg->timeout     = SOCKET_TIMEOUT_MS;
     cfg->delay_ms    = 0;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:D:Lrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:D:w:Lrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;
@@ -652,6 +669,9 @@ static int parse_args(struct config *cfg, char **url, char **headers, int argc, 
                 break;
             case 'D':
                 if (scan_time(optarg, &cfg->delay_ms)) return -1;
+                break;
+            case 'w':
+                if (scan_time(optarg, &cfg->warmup_ms)) return -1;
                 break;
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
