@@ -229,9 +229,9 @@ int main(int argc, char **argv) {
         }
 
         printf("---\n");
-        print_hdr_latency(sampled_histogram, "As Sampled");
+        print_hdr_latency(sampled_histogram, "As Sampled by original logic (to within 3 significant figures)");
         printf("---\n");
-        print_hdr_latency(statistics.latency_histogram, "Measured");
+        print_hdr_latency(statistics.latency_histogram, "Measured (uncorrected)");
         printf("---\n");
         print_hdr_latency(statistics.corrected_histogram, "Corrected");
         printf("---\n");
@@ -371,7 +371,8 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
     (void) stats_summarize(thread->latency);
     long double mean = stats_mean(thread->latency);
     long double latency = stats_percentile(thread->latency, 90.0) / 1000.0L;
-    long double interval = MAX(latency * 2, 10);
+    long double time_between_requests = latency + cfg.delay_ms;
+    long double interval = MAX(time_between_requests * 2, 10);
     long double rate = (interval / latency) * thread->connections;
 
     if (latency == 0) return CALIBRATE_DELAY_MS;
@@ -729,7 +730,7 @@ static void print_stats(char *name, stats *stats, char *(*fmt)(long double)) {
 
 static void print_hdr_latency(struct hdr_histogram* histogram, const char* description) {
     long double percentiles[] = { 50.0, 75.0, 90.0, 99.0 };
-    printf("  Latency Distribution (HDR - %s)\n", description);
+    printf("  Latency Distribution (HdrHistogram - %s)\n", description);
     for (size_t i = 0; i < sizeof(percentiles) / sizeof(long double); i++) {
         long double p = percentiles[i];
         int64_t n = hdr_value_at_percentile(histogram, p);
