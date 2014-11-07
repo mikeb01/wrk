@@ -498,7 +498,6 @@ static int response_complete(http_parser *parser) {
         if (0 == cfg.delay_ms) {
             aeCreateFileEvent(thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
         } else {
-            //     aeCreateTimeEvent(loop, CALIBRATE_DELAY_MS, calibrate, thread, NULL);
             aeCreateTimeEvent(thread->loop, cfg.delay_ms, after_delay, c, NULL);
         }
     }
