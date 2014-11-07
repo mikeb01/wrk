@@ -360,12 +360,14 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
     thread->rate     = ceil(rate / 10);
     thread->start    = time_us();
     thread->requests = 0;
-    thread->mean     = (uint64_t) mean;
+    thread->expected_interval = (uint64_t) mean + (cfg.delay_ms * 1000);
     stats_reset(thread->latency);
     hdr_reset(thread->latency_histogram);
     hdr_reset(thread->corrected_histogram);
 
-    printf("Interval: %d, mean: %lld, latency: %Lf\n", thread->interval, thread->mean, latency);
+    printf(
+        "Interval: %d, expected_interval: %lld, latency: %Lf\n",
+        thread->interval, thread->expected_interval, latency);
 
     aeCreateTimeEvent(loop, thread->interval, sample_rate, thread, NULL);
 
@@ -474,7 +476,7 @@ static int response_complete(http_parser *parser) {
         stats_record(thread->latency, now - c->start);
         uint64_t latency_timing = now - c->latency_start;
         hdr_record_value(thread->latency_histogram, latency_timing);
-        hdr_record_corrected_value(thread->corrected_histogram, latency_timing, thread->mean);
+        hdr_record_corrected_value(thread->corrected_histogram, latency_timing, thread->expected_interval);
         c->has_pending = false;
         if (0 == cfg.delay_ms) {
             aeCreateFileEvent(thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
