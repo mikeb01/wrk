@@ -373,7 +373,7 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
     long double latency = stats_percentile(thread->latency, 90.0) / 1000.0L;
     long double time_between_requests = latency + cfg.delay_ms;
     long double interval = MAX(time_between_requests * 2, 10);
-    long double rate = (interval / latency) * thread->connections;
+    long double rate = (interval / time_between_requests) * thread->connections;
 
     if (latency == 0) return CALIBRATE_DELAY_MS;
 
